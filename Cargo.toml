@@ -4,3 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ctrlc = { version = "3.4.5", features = ["termination"] }
+lazy_static = "1.5.0"
+serde = { version = "1.0.210", features = ["derive"] }
+thiserror = "1.0.64"
+tokio = { version = "1.40.0", features = ["rt-multi-thread", "macros", "time"] }
+tracing = "0.1.40"
+tracing-log = "0.2.0"
+tracing-subscriber = { version = "0.3.18", features = ["fmt", "env-filter"] }
