@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: autoscaler
+
+images:
+- name: SET-IN-KUSTOMIZE/carousel
+  newName: r.gfpd.us/library/carousel
+  newTag: v0.1.3
+
+resources:
+- crb.yaml
+- svcacct.yaml
+- deployment.yaml

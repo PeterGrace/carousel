@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: carousel
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: carousel
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app.kubernetes.io/name: carousel
+      annotations:
+        autocert.step.sm/name: carousel.carousel.svc.cluster.local
+    spec:
+      serviceAccountName: carousel
+      automountServiceAccountToken: true
+      containers:
+      - image: SET-IN-KUSTOMIZE/carousel
+        imagePullPolicy: Always
+        name: carousel
+        env:
+          - name: RUST_LOG
+            value: "info"
+        resources:
+          requests:
+            cpu: 512m
+            memory: 256Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        fsGroup: 10000
+        runAsUser: 10000
+      terminationGracePeriodSeconds: 30
