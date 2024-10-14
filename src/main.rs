@@ -114,7 +114,7 @@ async fn main() {
                 if let Some(max_age) = dt.checked_add_days(Days::new(7)) {
                     let now = Utc::now();
                     if now >= max_age {
-                        info!("fake error: node {} is older than timestamp so we should drain it",&name);
+                        debug!("node {} is older than timestamp so we should drain it",&name);
                         cull_list.push((name, dt));
                     }
                 }
