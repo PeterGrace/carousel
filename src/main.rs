@@ -203,21 +203,20 @@ async fn main() {
         }
         //endregion
 
-        let mut pod_cull_list: Vec<(String, String, DateTime<Utc>)> = vec![];
+        let mut pod_cull_list: Vec<(Pod, DateTime<Utc>)> = vec![];
 
         //region Pod Selection and Culling
         if let Ok(all_pods) = pods.list(&listparams).await {
             for pod in all_pods {
-                if let Some(status) = pod.status {
+                if let Some(status) = pod.clone().status {
                     if let Some(start_date) = status.start_time {
-                        let namespace = pod.metadata.namespace.unwrap().clone();
-                        let name = pod.metadata.name.unwrap().clone();
+                        let name = pod.metadata.name.clone().unwrap().clone();
                         let dt = start_date.0;
                         if let Some(max_age) = dt.checked_add_days(Days::new(POD_CULL_DAYS)) {
                             let now = Utc::now();
                             if now >= max_age {
                                 debug!("pod {} is older than timestamp so we should drain it",&name);
-                                pod_cull_list.push((namespace, name, dt));
+                                pod_cull_list.push((pod.clone(), dt));
                             }
                         }
                     } else {
@@ -231,16 +230,36 @@ async fn main() {
             error!("Couldn't retrieve pod list to check pod age");
         }
         if pod_cull_list.len() > 0 {
-            pod_cull_list.sort_by_key(|(_, _, d)| *d);
-            let (namespace, pod_name , date) = pod_cull_list.get(0).unwrap();
-            let url = Pod::url_path(&(), Some(namespace));
-            let req = Request::new(url).delete(&pod_name, &DeleteParams::default()).unwrap();
-            if let Err(e) = client.request::<Value>(req).await {
-                error!("Couldn't delete pod {namespace}/{pod_name}: {e}");
-            } else {
-                info!("Pod {namespace}/{pod_name} was deleted because it was created on {date}");
-            }
+            pod_cull_list.sort_by_key(|( _, d)| *d);
+            let (pod , date) = pod_cull_list.get(0).unwrap();
+            let namespace = pod.metadata.namespace.clone().unwrap_or_default();
+            let name = pod.metadata.name.clone().unwrap_or_default();
+            let url = Pod::url_path(&(), Some(&namespace));
+            let mut deleted = false;
+            let spec = pod.spec.clone().unwrap();
+            if let Some(vols) = spec.volumes {
+                for vol in vols.iter() {
+                    if vol.empty_dir.is_some() {
+                        warn!("Pod {namespace}/{name} has local storage, we must delete instead of evict.");
+                        let dp = DeleteParams::default();
+                        let req = Request::new(url.clone()).delete(&name, &dp).unwrap();
+                        if let Err(e) = client.request::<Value>(req).await {
+                            error!("Error deleting {namespace}/{name}: {e}");
+                            break;
+                        } else {
+                            deleted = true;
+                        }
 
+                    }
+                }
+            }
+            if (!deleted) {
+                let ep = EvictParams::default();
+                let req = Request::new(&url).evict(&name, &ep).unwrap();
+                if let Err(e) = client.request::<Value>(req).await {
+                    error!("Couldn't evict {namespace}/{name}: {e}");
+                }
+            }
         }
         //endregion
 
