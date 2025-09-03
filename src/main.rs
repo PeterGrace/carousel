@@ -22,6 +22,10 @@ lazy_static! {
     pub static ref SHUTDOWN: OnceCell<bool> = OnceCell::new();
 }
 
+const POD_CULL_DAYS: u64 = 7;
+const NODE_CULL_DAYS: u64 = 7;
+
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -56,7 +60,9 @@ async fn main() {
         };
 
         let mut notready: bool = false;
-        let mut cull_list: Vec<(String, DateTime<Utc>)> = vec![];
+        let mut node_cull_list: Vec<(String, DateTime<Utc>)> = vec![];
+
+        //region Node Selection and Culling
         for node in nodes_to_check.items.iter() {
             let node = node.clone();
             let metadata = node.metadata;
@@ -111,11 +117,11 @@ async fn main() {
             // SchedulingDisabled.
             if let Some(create) = metadata.creation_timestamp {
                 let dt = create.0;
-                if let Some(max_age) = dt.checked_add_days(Days::new(7)) {
+                if let Some(max_age) = dt.checked_add_days(Days::new(NODE_CULL_DAYS)) {
                     let now = Utc::now();
                     if now >= max_age {
                         debug!("node {} is older than timestamp so we should drain it",&name);
-                        cull_list.push((name, dt));
+                        node_cull_list.push((name, dt));
                     }
                 }
             } else {
@@ -123,18 +129,18 @@ async fn main() {
                 continue;
             }
         };
-        if cull_list.len() > 0 && notready == false {
+        if node_cull_list.len() > 0 && notready == false {
             // we have nodes to drain, so lets grab the oldest one
-            cull_list.sort_by_key(|(n, d)| *d);
+            node_cull_list.sort_by_key(|(_, d)| *d);
 
-            let (node_name, date) = cull_list.get(0).unwrap();
-            let node = match nodes.get(&node_name).await {
-                Ok(n) => n,
-                Err(e) => {
-                    error!("Couldn't get node {node_name}: {e}");
-                    break;
-                }
-            };
+            let (node_name, date) = node_cull_list.get(0).unwrap();
+            // let node = match nodes.get(&node_name).await {
+            //     Ok(n) => n,
+            //     Err(e) => {
+            //         error!("Couldn't get node {node_name}: {e}");
+            //         break;
+            //     }
+            // };
 
             if let Err(e) = nodes.cordon(node_name).await {
                 error!("Attempted to cordon {node_name} but it failed {e}");
@@ -195,6 +201,49 @@ async fn main() {
                 }
             };
         }
+        //endregion
+
+        let mut pod_cull_list: Vec<(String, String, DateTime<Utc>)> = vec![];
+
+        //region Pod Selection and Culling
+        if let Ok(all_pods) = pods.list(&listparams).await {
+            for pod in all_pods {
+                if let Some(status) = pod.status {
+                    if let Some(start_date) = status.start_time {
+                        let namespace = pod.metadata.namespace.unwrap().clone();
+                        let name = pod.metadata.name.unwrap().clone();
+                        let dt = start_date.0;
+                        if let Some(max_age) = dt.checked_add_days(Days::new(POD_CULL_DAYS)) {
+                            let now = Utc::now();
+                            if now >= max_age {
+                                debug!("pod {} is older than timestamp so we should drain it",&name);
+                                pod_cull_list.push((namespace, name, dt));
+                            }
+                        }
+                    } else {
+                        info!("Pod {} didn't have a start time", pod.metadata.name.unwrap());
+                    }
+                } else {
+                    info!("Pod {} didn't have a status", pod.metadata.name.unwrap());
+                }
+            }
+        } else {
+            error!("Couldn't retrieve pod list to check pod age");
+        }
+        if pod_cull_list.len() > 0 {
+            pod_cull_list.sort_by_key(|(_, _, d)| *d);
+            let (namespace, pod_name , date) = pod_cull_list.get(0).unwrap();
+            let url = Pod::url_path(&(), Some(namespace));
+            let req = Request::new(url).delete(&pod_name, &DeleteParams::default()).unwrap();
+            if let Err(e) = client.request::<Value>(req).await {
+                error!("Couldn't delete pod {namespace}/{pod_name}: {e}");
+            } else {
+                info!("Pod {namespace}/{pod_name} was deleted because it was created on {date}");
+            }
+
+        }
+        //endregion
+
 
         tokio::time::sleep(Duration::from_secs(300)).await;
     }
